@@ -1,0 +1,7 @@
+node_modules/
+downloads/
+youtube downloads/
+.venv/
+.cache/
+.DS_Store
+*.log
