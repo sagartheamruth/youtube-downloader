@@ -1,0 +1,12 @@
+{
+  "name": "yt-downloader",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal local YouTube downloader UI for MP3 and MP4 downloads.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
