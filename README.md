@@ -27,3 +27,7 @@ http://localhost:3000
 ```
 
 Downloads are saved in `youtube downloads/`.
+
+## Render
+
+The repo includes a Dockerfile for Render. It installs `yt-dlp` and `ffmpeg`, starts the Node server, and exposes a browser download button when each job finishes.
