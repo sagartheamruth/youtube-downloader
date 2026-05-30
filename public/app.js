@@ -5,6 +5,7 @@ const qualityField = document.querySelector("#qualityField");
 const qualityInput = document.querySelector("#quality");
 const infoButton = document.querySelector("#infoButton");
 const toolStatus = document.querySelector("#toolStatus");
+const downloadLink = document.querySelector("#downloadLink");
 const videoCard = document.querySelector("#videoCard");
 const log = document.querySelector("#log");
 const clipEnabled = document.querySelector("#clipEnabled");
@@ -31,6 +32,16 @@ function setLog(lines) {
 function setNotice(message, level = "muted") {
   toolStatus.className = `notice ${level}`;
   toolStatus.textContent = message;
+}
+
+function setDownloadLink(url) {
+  downloadLink.classList.toggle("hidden", !url);
+  if (url) {
+    downloadLink.href = url;
+    downloadLink.textContent = "Download file";
+  } else {
+    downloadLink.removeAttribute("href");
+  }
 }
 
 function durationLabel(seconds) {
@@ -148,6 +159,7 @@ function syncClipControls() {
 
 async function checkVideo() {
   videoCard.classList.add("hidden");
+  setDownloadLink(null);
   setLog("Reading video info...");
 
   try {
@@ -182,10 +194,12 @@ async function pollJob(id) {
     if (!response.ok) {
       clearInterval(activeTimer);
       setLog(data.error || "Could not find download job.");
+      setDownloadLink(null);
       return;
     }
 
     setLog(data.job.log);
+    setDownloadLink(data.job.downloadUrl);
     if (!["running", "converting"].includes(data.job.status)) {
       clearInterval(activeTimer);
       await refreshStatus();
@@ -195,6 +209,7 @@ async function pollJob(id) {
 
 form.addEventListener("submit", async event => {
   event.preventDefault();
+  setDownloadLink(null);
   setLog("Preparing download...");
 
   try {
@@ -207,8 +222,10 @@ form.addEventListener("submit", async event => {
       endTime: endTimeInput.value
     });
     setLog(data.job.log);
+    setDownloadLink(data.job.downloadUrl);
     pollJob(data.job.id);
   } catch (error) {
+    setDownloadLink(null);
     setLog(error.message);
   }
 });
