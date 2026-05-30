@@ -5,7 +5,7 @@ const { spawn, spawnSync } = require("child_process");
 const { randomUUID } = require("crypto");
 
 const PORT = Number(process.env.PORT || 3000);
-const HOST = process.env.HOST || "127.0.0.1";
+const HOST = process.env.HOST || "0.0.0.0";
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
 const DOWNLOAD_DIR = path.join(ROOT, "youtube downloads");
@@ -171,6 +171,8 @@ function buildYtDlpArgs({ url, type, quality, clip }) {
       "mp3",
       "--audio-quality",
       "0",
+      "--print",
+      "after_move:filepath",
       "-o",
       output,
       url
@@ -200,6 +202,39 @@ function buildYtDlpArgs({ url, type, quality, clip }) {
 function appendJobLog(job, lines) {
   job.log.push(...lines);
   job.log = job.log.slice(-80);
+}
+
+function publicJob(job) {
+  const readyPath = job.premiereFilePath || job.filePath;
+  return {
+    ...job,
+    downloadUrl: job.status === "complete" && readyPath ? `/api/jobs/${job.id}/file` : null
+  };
+}
+
+function outputFileForJob(job) {
+  const filePath = job.premiereFilePath || job.filePath;
+  if (!filePath) return null;
+
+  const resolved = path.resolve(filePath);
+  const downloadsRoot = path.resolve(DOWNLOAD_DIR);
+  if (resolved !== downloadsRoot && !resolved.startsWith(`${downloadsRoot}${path.sep}`)) return null;
+  if (!fs.existsSync(resolved)) return null;
+  return resolved;
+}
+
+function contentDispositionName(filePath) {
+  return path.basename(filePath).replace(/["\r\n]/g, "_");
+}
+
+function sendFile(res, filePath) {
+  const stat = fs.statSync(filePath);
+  res.writeHead(200, {
+    "content-type": "application/octet-stream",
+    "content-length": stat.size,
+    "content-disposition": `attachment; filename="${contentDispositionName(filePath)}"`
+  });
+  fs.createReadStream(filePath).pipe(res);
 }
 
 function getMediaInfo(filePath) {
@@ -399,7 +434,7 @@ function startDownload(payload) {
       .map(line => line.trim())
       .filter(line => line && !hiddenLogPatterns.some(pattern => pattern.test(line)));
     for (const line of lines) {
-      if (type === "mp4" && path.isAbsolute(line.trim()) && line.trim().endsWith(".mp4")) {
+      if (path.isAbsolute(line.trim()) && /\.(mp3|mp4|m4a|webm|mkv)$/i.test(line.trim())) {
         job.filePath = line.trim();
       }
     }
@@ -424,7 +459,7 @@ function startDownload(payload) {
       appendJobLog(
         job,
         converted
-          ? ["Done. Use the Premiere-ready MP4 for editing."]
+          ? ["Done. Use the Premiere-ready MP4 for editing.", `Download ready: /api/jobs/${job.id}/file`]
           : ["Download finished, but the Premiere conversion failed."]
       );
       return;
@@ -432,10 +467,14 @@ function startDownload(payload) {
 
     job.finishedAt = new Date().toISOString();
     job.status = code === 0 ? "complete" : "failed";
-    appendJobLog(job, [code === 0 ? `Saved to ${DOWNLOAD_DIR}` : `Download failed with exit code ${code}.`]);
+    appendJobLog(job, [
+      code === 0
+        ? `Download ready: /api/jobs/${job.id}/file`
+        : `Download failed with exit code ${code}.`
+    ]);
   });
 
-  return job;
+  return publicJob(job);
 }
 
 async function handleApi(req, res, pathname) {
@@ -504,11 +543,22 @@ async function handleApi(req, res, pathname) {
     }
   }
 
+  const fileMatch = pathname.match(/^\/api\/jobs\/([a-f0-9-]+)\/file$/);
+  if (fileMatch && req.method === "GET") {
+    const job = jobs.get(fileMatch[1]);
+    if (!job) return sendJson(res, 404, { error: "Job not found." });
+    if (job.status !== "complete") return sendJson(res, 409, { error: "Download is not ready yet." });
+
+    const filePath = outputFileForJob(job);
+    if (!filePath) return sendJson(res, 404, { error: "Downloaded file is no longer available." });
+    return sendFile(res, filePath);
+  }
+
   const jobMatch = pathname.match(/^\/api\/jobs\/([a-f0-9-]+)$/);
   if (jobMatch && req.method === "GET") {
     const job = jobs.get(jobMatch[1]);
     if (!job) return sendJson(res, 404, { error: "Job not found." });
-    return sendJson(res, 200, { job });
+    return sendJson(res, 200, { job: publicJob(job) });
   }
 
   sendJson(res, 404, { error: "Not found." });
