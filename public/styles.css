@@ -353,6 +353,25 @@ button:disabled {
   color: var(--bad);
 }
 
+.download-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  margin-top: 16px;
+  border: 2px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--ink);
+  box-shadow: 5px 5px 0 var(--line-strong);
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.download-link:hover {
+  background: var(--accent-dark);
+}
+
 .video {
   display: grid;
   grid-template-columns: 120px 1fr;
