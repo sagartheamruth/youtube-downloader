@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>YouTube Downloader</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="YouTube Downloader home">
+          <span class="brand-mark"></span>
+          <span>YT Downloader</span>
+        </a>
+      </header>
+
+      <section class="panel">
+        <div class="intro">
+          <div class="heading">
+            <p class="eyebrow">Local downloader</p>
+            <h1>YouTube Downloader</h1>
+          </div>
+
+          <div id="toolStatus" class="notice muted">Checking tools...</div>
+          <pre id="log" class="log hidden" aria-live="polite"></pre>
+        </div>
+
+        <form id="downloadForm" class="form">
+          <label class="field">
+            <span>YouTube link</span>
+            <input id="url" name="url" type="url" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off" required>
+          </label>
+
+          <div class="row">
+            <label class="field">
+              <span>Format</span>
+              <select id="type" name="type">
+                <option value="mp4">MP4 video</option>
+                <option value="mp3">MP3 audio</option>
+              </select>
+            </label>
+
+            <label class="field" id="qualityField">
+              <span>Resolution</span>
+              <select id="quality" name="quality">
+                <option value="best">Best available</option>
+                <option value="2160">4K / 2160p</option>
+                <option value="1440">1440p</option>
+                <option value="1080">1080p</option>
+                <option value="720">720p</option>
+                <option value="480">480p</option>
+                <option value="360">360p</option>
+              </select>
+            </label>
+          </div>
+
+          <section class="clip-box">
+            <label class="clip-toggle">
+              <input id="clipEnabled" type="checkbox">
+              <span>Download a specific part</span>
+            </label>
+
+            <div id="clipControls" class="clip-controls hidden">
+              <div class="clip-times">
+                <label class="field">
+                  <span>Start</span>
+                  <input id="startTime" type="text" inputmode="numeric" value="00:00" placeholder="00:00">
+                </label>
+
+                <label class="field">
+                  <span>End</span>
+                  <input id="endTime" type="text" inputmode="numeric" value="00:20" placeholder="00:20">
+                </label>
+              </div>
+
+              <div class="range-wrap">
+                <div class="range-track">
+                  <div id="rangeFill" class="range-fill"></div>
+                  <div id="hoverMarker" class="hover-marker hidden"></div>
+                </div>
+                <input id="startRange" class="range-input" type="range" min="0" max="120" value="0" step="1" aria-label="Clip start">
+                <input id="endRange" class="range-input" type="range" min="0" max="120" value="20" step="1" aria-label="Clip end">
+              </div>
+              <div id="clipHint" class="clip-hint">Selected: 00:00 - 00:20</div>
+            </div>
+          </section>
+
+          <div class="actions">
+            <button type="button" id="infoButton">Check video</button>
+            <button type="submit" class="primary">Download</button>
+          </div>
+
+          <div id="videoCard" class="video hidden"></div>
+        </form>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
