@@ -1,0 +1,8 @@
+node_modules
+.git
+.venv
+.cache
+youtube downloads
+downloads
+.DS_Store
+*.log
