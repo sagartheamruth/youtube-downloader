@@ -1,6 +1,6 @@
-# YouTube Downloader
+# Video Downloader
 
-A minimal local web app for downloading YouTube videos as MP4 or MP3.
+A minimal local web app for downloading YouTube, public Instagram, X, and yt-dlp supported video links as MP4 or MP3.
 
 ## Requirements
 
@@ -27,6 +27,8 @@ http://localhost:3000
 ```
 
 Downloads are saved in `youtube downloads/`.
+
+Instagram and X support work best with public posts that contain video. The Any Link tab uses yt-dlp's supported sites, so DRM, private, or login-gated links can fail unless yt-dlp is configured with the right account access.
 
 ## Render
 
