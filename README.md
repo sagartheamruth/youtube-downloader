@@ -30,6 +30,15 @@ Downloads are saved in `youtube downloads/`.
 
 Instagram and X support work best with public posts that contain video. The Any Link tab uses yt-dlp's supported sites, so DRM, private, or login-gated links can fail unless yt-dlp is configured with the right account access.
 
+## YouTube bot checks
+
+YouTube can block hosted servers with "Sign in to confirm you're not a bot." The app supports optional yt-dlp cookies:
+
+- Render: set `YTDLP_COOKIES_BASE64` to a base64-encoded Netscape cookies export.
+- Local Mac: run with `YTDLP_COOKIES_FROM_BROWSER=chrome npm start`, or place a `cookies.txt` file in the project root.
+
+Treat cookies like a password. Do not commit them.
+
 ## Render
 
 The repo includes a Dockerfile for Render. It installs `yt-dlp` and `ffmpeg`, starts the Node server, and exposes a browser download button when each job finishes.
