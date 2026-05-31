@@ -27,13 +27,6 @@ const mimeTypes = {
   ".svg": "image/svg+xml"
 };
 
-function hasCommand(command) {
-  const result = spawnSync("sh", ["-lc", `command -v ${command}`], {
-    stdio: "ignore"
-  });
-  return result.status === 0;
-}
-
 function commandPath(command) {
   const result = spawnSync("sh", ["-lc", `command -v ${command}`], {
     encoding: "utf8"
@@ -90,14 +83,69 @@ function readBody(req) {
   });
 }
 
-function isValidYoutubeUrl(value) {
+function normalizedHost(value) {
   try {
     const url = new URL(value);
-    const host = url.hostname.replace(/^www\./, "");
-    return ["youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"].includes(host);
+    return url.hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function isValidYoutubeUrl(value) {
+  const host = normalizedHost(value);
+  return ["youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"].includes(host);
+}
+
+function isValidInstagramUrl(value) {
+  const host = normalizedHost(value);
+  return ["instagram.com", "m.instagram.com"].includes(host);
+}
+
+function isValidXUrl(value) {
+  const host = normalizedHost(value);
+  return ["x.com", "twitter.com", "mobile.twitter.com"].includes(host);
+}
+
+function isValidHttpUrl(value) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol);
   } catch {
     return false;
   }
+}
+
+function platformFromPayload(payload) {
+  if (payload.platform === "any") return "any";
+  if (payload.platform === "x") return "x";
+  if (payload.platform === "instagram") return "instagram";
+  if (payload.platform === "youtube") return "youtube";
+  if (isValidInstagramUrl(payload.url)) return "instagram";
+  if (isValidXUrl(payload.url)) return "x";
+  return "youtube";
+}
+
+function sourceLabel(platform) {
+  if (platform === "any") return "Any Link";
+  if (platform === "x") return "X";
+  return platform === "instagram" ? "Instagram" : "YouTube";
+}
+
+function validateSource(platform, url) {
+  const validators = {
+    any: isValidHttpUrl,
+    instagram: isValidInstagramUrl,
+    x: isValidXUrl,
+    youtube: isValidYoutubeUrl
+  };
+  const ok = (validators[platform] || isValidYoutubeUrl)(url);
+  if (!ok) throw new Error(`Enter a valid ${sourceLabel(platform)} URL.`);
+}
+
+function extractorArgs(platform) {
+  if (platform !== "youtube") return [];
+  return ["--extractor-args", "youtube:player_client=android_vr"];
 }
 
 function qualityLabel(height) {
@@ -141,8 +189,19 @@ function clipSlug(clip) {
   return ` [clip ${timeLabel(clip.start).replace(/:/g, "-")}-${timeLabel(clip.end).replace(/:/g, "-")}]`;
 }
 
-function buildYtDlpArgs({ url, type, quality, clip }) {
-  const output = path.join(DOWNLOAD_DIR, `%(title).180B [%(id)s]${clipSlug(clip)}.%(ext)s`);
+function sourceOutputName(platform, clip) {
+  const prefixes = {
+    any: "Link - ",
+    instagram: "Instagram - ",
+    x: "X - ",
+    youtube: ""
+  };
+  const prefix = prefixes[platform] || "";
+  return `${prefix}%(title).180B [%(id)s]${clipSlug(clip)}.%(ext)s`;
+}
+
+function buildYtDlpArgs({ url, platform, type, quality, clip }) {
+  const output = path.join(DOWNLOAD_DIR, sourceOutputName(platform, clip));
   const ffmpegPath = getFfmpegPath();
   const ffmpegArgs = ffmpegPath ? ["--ffmpeg-location", ffmpegPath] : [];
   const clipArgs = clip
@@ -152,8 +211,7 @@ function buildYtDlpArgs({ url, type, quality, clip }) {
     "--no-playlist",
     "--cache-dir",
     CACHE_DIR,
-    "--extractor-args",
-    "youtube:player_client=android_vr",
+    ...extractorArgs(platform),
     "--force-ipv4",
     "--retries",
     "5",
@@ -208,6 +266,8 @@ function publicJob(job) {
   const readyPath = job.premiereFilePath || job.filePath;
   return {
     ...job,
+    platformLabel: sourceLabel(job.platform),
+    qualityLabel: job.type === "mp4" ? qualityLabel(job.quality) : null,
     downloadUrl: job.status === "complete" && readyPath ? `/api/jobs/${job.id}/file` : null
   };
 }
@@ -385,18 +445,80 @@ function safeFormats(formats = []) {
   };
 }
 
+function toolsStatus() {
+  return {
+    ytdlp: Boolean(getYtDlpPath()),
+    ffmpeg: Boolean(getFfmpegPath())
+  };
+}
+
+function readMetadata(platform, url) {
+  const ytdlpPath = getYtDlpPath();
+  if (!ytdlpPath) throw new Error("yt-dlp is not installed.");
+
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+
+  const result = spawnSync(
+    ytdlpPath,
+    [
+      "--no-playlist",
+      "--cache-dir",
+      CACHE_DIR,
+      ...extractorArgs(platform),
+      "--force-ipv4",
+      "--dump-single-json",
+      url
+    ],
+    {
+      encoding: "utf8",
+      maxBuffer: 20 * 1024 * 1024
+    }
+  );
+
+  if (result.status !== 0) {
+    throw new Error(result.stderr.trim() || `Could not read ${sourceLabel(platform)} info.`);
+  }
+
+  const info = JSON.parse(result.stdout);
+  return {
+    title: info.title,
+    uploader: info.uploader,
+    duration: info.duration,
+    thumbnail: info.thumbnail,
+    platform,
+    platformLabel: sourceLabel(platform),
+    formats: safeFormats(info.formats)
+  };
+}
+
+function appendDownloaderOutput(job, chunk) {
+  const lines = chunk
+    .toString()
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !hiddenLogPatterns.some(pattern => pattern.test(line)));
+
+  for (const line of lines) {
+    if (path.isAbsolute(line) && /\.(mp3|mp4|m4a|webm|mkv)$/i.test(line)) {
+      job.filePath = line;
+    }
+  }
+  appendJobLog(job, lines.slice(-20));
+}
+
 function startDownload(payload) {
   const ytdlpPath = getYtDlpPath();
   if (!ytdlpPath) {
     throw new Error("yt-dlp is not installed. Install it first, then try again.");
   }
 
+  const platform = platformFromPayload(payload);
   const type = payload.type === "mp3" ? "mp3" : "mp4";
-  const quality = String(payload.quality || "best");
+  const quality = platform === "youtube" ? String(payload.quality || "best") : "best";
   const clip = clipFromPayload(payload);
   const allowedQualities = new Set(["best", "2160", "1440", "1080", "720", "480", "360"]);
 
-  if (!isValidYoutubeUrl(payload.url)) throw new Error("Enter a valid YouTube URL.");
+  validateSource(platform, payload.url);
   if (type === "mp4" && !allowedQualities.has(quality)) throw new Error("Pick a valid MP4 resolution.");
   if (type === "mp3" && !getFfmpegPath()) {
     throw new Error("ffmpeg is required for MP3 downloads. Install it first, then try again.");
@@ -408,11 +530,15 @@ function startDownload(payload) {
   const id = randomUUID();
   const job = {
     id,
+    platform,
     type,
     quality,
     status: "running",
     log: [
-      `Starting ${type.toUpperCase()} download${type === "mp4" ? ` at ${qualityLabel(quality)}` : ""}...`,
+      `Starting ${sourceLabel(platform)} ${type.toUpperCase()} download${type === "mp4" ? ` at ${qualityLabel(quality)}` : ""}...`,
+      ...(platform === "instagram" ? ["Public Instagram Reel, post, or video URLs work best."] : []),
+      ...(platform === "x" ? ["Public X posts with video work best. Login-gated posts may fail."] : []),
+      ...(platform === "any" ? ["Any Link uses yt-dlp site support. DRM, private, or login-gated links may fail."] : []),
       ...(clip ? [`Clip range: ${timeLabel(clip.start)} - ${timeLabel(clip.end)}`] : [])
     ],
     createdAt: new Date().toISOString(),
@@ -423,26 +549,12 @@ function startDownload(payload) {
   };
   jobs.set(id, job);
 
-  const child = spawn(ytdlpPath, buildYtDlpArgs({ url: payload.url, type, quality, clip }), {
+  const child = spawn(ytdlpPath, buildYtDlpArgs({ url: payload.url, platform, type, quality, clip }), {
     cwd: ROOT
   });
 
-  const appendLog = chunk => {
-    const lines = chunk
-      .toString()
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(line => line && !hiddenLogPatterns.some(pattern => pattern.test(line)));
-    for (const line of lines) {
-      if (path.isAbsolute(line.trim()) && /\.(mp3|mp4|m4a|webm|mkv)$/i.test(line.trim())) {
-        job.filePath = line.trim();
-      }
-    }
-    appendJobLog(job, lines.slice(-20));
-  };
-
-  child.stdout.on("data", appendLog);
-  child.stderr.on("data", appendLog);
+  child.stdout.on("data", chunk => appendDownloaderOutput(job, chunk));
+  child.stderr.on("data", chunk => appendDownloaderOutput(job, chunk));
   child.on("error", error => {
     job.status = "failed";
     job.finishedAt = new Date().toISOString();
@@ -481,57 +593,20 @@ async function handleApi(req, res, pathname) {
   if (pathname === "/api/status" && req.method === "GET") {
     return sendJson(res, 200, {
       ok: true,
-      tools: {
-        ytdlp: Boolean(getYtDlpPath()),
-        ffmpeg: Boolean(getFfmpegPath())
-      },
+      tools: toolsStatus(),
       downloadDir: DOWNLOAD_DIR
     });
   }
 
   if (pathname === "/api/metadata" && req.method === "POST") {
-    const ytdlpPath = getYtDlpPath();
-    if (!ytdlpPath) {
-      return sendJson(res, 412, { error: "yt-dlp is not installed." });
+    try {
+      const body = await readBody(req);
+      const platform = platformFromPayload(body);
+      validateSource(platform, body.url);
+      return sendJson(res, 200, readMetadata(platform, body.url));
+    } catch (error) {
+      return sendJson(res, error.message.includes("installed") ? 412 : 400, { error: error.message });
     }
-
-    const body = await readBody(req);
-    if (!isValidYoutubeUrl(body.url)) {
-      return sendJson(res, 400, { error: "Enter a valid YouTube URL." });
-    }
-
-    fs.mkdirSync(CACHE_DIR, { recursive: true });
-
-    const result = spawnSync(
-      ytdlpPath,
-      [
-        "--no-playlist",
-        "--cache-dir",
-        CACHE_DIR,
-        "--extractor-args",
-        "youtube:player_client=android_vr",
-        "--force-ipv4",
-        "--dump-single-json",
-        body.url
-      ],
-      {
-        encoding: "utf8",
-        maxBuffer: 20 * 1024 * 1024
-      }
-    );
-
-    if (result.status !== 0) {
-      return sendJson(res, 500, { error: result.stderr.trim() || "Could not read video info." });
-    }
-
-    const info = JSON.parse(result.stdout);
-    return sendJson(res, 200, {
-      title: info.title,
-      uploader: info.uploader,
-      duration: info.duration,
-      thumbnail: info.thumbnail,
-      formats: safeFormats(info.formats)
-    });
   }
 
   if (pathname === "/api/download" && req.method === "POST") {
@@ -603,5 +678,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`YouTube downloader running at http://${HOST}:${PORT}`);
+  console.log(`Video downloader running at http://${HOST}:${PORT}`);
 });
