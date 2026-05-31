@@ -18,9 +18,36 @@ const rangeFill = document.querySelector("#rangeFill");
 const clipHint = document.querySelector("#clipHint");
 const rangeWrap = document.querySelector(".range-wrap");
 const hoverMarker = document.querySelector("#hoverMarker");
+const sourceTabs = document.querySelectorAll(".source-tab");
+const urlLabel = document.querySelector("#urlLabel");
+const sourceHint = document.querySelector("#sourceHint");
 
 let activeTimer = null;
 let videoDuration = 120;
+let activePlatform = "youtube";
+
+const platformCopy = {
+  youtube: {
+    label: "YouTube link",
+    placeholder: "https://www.youtube.com/watch?v=...",
+    hint: "Paste a YouTube video link."
+  },
+  instagram: {
+    label: "Instagram link",
+    placeholder: "https://www.instagram.com/reel/...",
+    hint: "Paste a public Instagram Reel, post, or video link."
+  },
+  x: {
+    label: "X link",
+    placeholder: "https://x.com/user/status/...",
+    hint: "Paste a public X post link that contains a video."
+  },
+  any: {
+    label: "Video link",
+    placeholder: "https://example.com/video...",
+    hint: "Paste any public video page supported by yt-dlp."
+  }
+};
 
 function setLog(lines) {
   const text = Array.isArray(lines) ? lines.join("\n") : lines;
@@ -42,6 +69,16 @@ function setDownloadLink(url) {
   } else {
     downloadLink.removeAttribute("href");
   }
+}
+
+function escapeHtml(value) {
+  return String(value || "").replace(/[&<>"']/g, char => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;"
+  })[char]);
 }
 
 function durationLabel(seconds) {
@@ -149,7 +186,9 @@ async function refreshStatus() {
 }
 
 function syncFormatFields() {
-  qualityField.classList.toggle("hidden", typeInput.value === "mp3");
+  const hideQuality = typeInput.value === "mp3" || activePlatform !== "youtube";
+  qualityField.classList.toggle("hidden", hideQuality);
+  if (activePlatform !== "youtube") qualityInput.value = "best";
 }
 
 function syncClipControls() {
@@ -160,20 +199,26 @@ function syncClipControls() {
 async function checkVideo() {
   videoCard.classList.add("hidden");
   setDownloadLink(null);
-  setLog("Reading video info...");
+  setLog(`Reading ${platformCopy[activePlatform].label.replace(" link", "")} info...`);
 
   try {
-    const data = await postJson("/api/metadata", { url: urlInput.value.trim() });
+    const data = await postJson("/api/metadata", {
+      url: urlInput.value.trim(),
+      platform: activePlatform
+    });
     setClipDuration(data.duration || 120);
-    const mp4Options = data.formats.mp4.length
+    const mp4Options = activePlatform !== "youtube"
+      ? "Best available"
+      : data.formats.mp4.length
       ? data.formats.mp4.map(format => format.label).join(", ")
       : "Best available";
+    const platformLabel = data.platformLabel || platformCopy[activePlatform].label.replace(" link", "");
 
     videoCard.innerHTML = `
-      ${data.thumbnail ? `<img src="${data.thumbnail}" alt="">` : ""}
+      ${data.thumbnail ? `<img src="${escapeHtml(data.thumbnail)}" alt="">` : ""}
       <div>
-        <h2>${data.title || "Untitled video"}</h2>
-        <p>${[data.uploader, durationLabel(data.duration)].filter(Boolean).join(" · ")}</p>
+        <h2>${escapeHtml(data.title || "Untitled video")}</h2>
+        <p>${escapeHtml([platformLabel, data.uploader, durationLabel(data.duration)].filter(Boolean).join(" · "))}</p>
         <p>MP4: ${mp4Options}</p>
         <p>MP3: ${data.formats.mp3 ? "Available" : "Not found"}</p>
       </div>
@@ -215,6 +260,7 @@ form.addEventListener("submit", async event => {
   try {
     const data = await postJson("/api/download", {
       url: urlInput.value.trim(),
+      platform: activePlatform,
       type: typeInput.value,
       quality: qualityInput.value,
       clipEnabled: clipEnabled.checked,
@@ -232,6 +278,26 @@ form.addEventListener("submit", async event => {
 
 infoButton.addEventListener("click", checkVideo);
 typeInput.addEventListener("change", syncFormatFields);
+sourceTabs.forEach(tab => {
+  tab.addEventListener("click", () => {
+    activePlatform = tab.dataset.platform;
+    const copy = platformCopy[activePlatform];
+
+    sourceTabs.forEach(item => {
+      const selected = item === tab;
+      item.classList.toggle("active", selected);
+      item.setAttribute("aria-selected", String(selected));
+    });
+
+    urlLabel.textContent = copy.label;
+    urlInput.placeholder = copy.placeholder;
+    sourceHint.textContent = copy.hint;
+    videoCard.classList.add("hidden");
+    setDownloadLink(null);
+    setLog("");
+    syncFormatFields();
+  });
+});
 clipEnabled.addEventListener("change", syncClipControls);
 startRange.addEventListener("input", () => updateClipUi({ fromRange: true }));
 endRange.addEventListener("input", () => updateClipUi({ fromRange: true }));
