@@ -10,6 +10,8 @@ const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
 const DOWNLOAD_DIR = path.join(ROOT, "youtube downloads");
 const CACHE_DIR = path.join(ROOT, ".cache", "yt-dlp");
+const DEFAULT_COOKIES_FILE = path.join(ROOT, "cookies.txt");
+const ENV_COOKIES_FILE = path.join(CACHE_DIR, "cookies.txt");
 const LOCAL_YTDLP = path.join(ROOT, ".venv", "bin", "yt-dlp");
 const LOCAL_PYTHON = path.join(ROOT, ".venv", "bin", "python");
 const PREMIERE_SUFFIX = " - Premiere Ready";
@@ -148,6 +150,61 @@ function extractorArgs(platform) {
   return ["--extractor-args", "youtube:player_client=android_vr"];
 }
 
+function writeEnvCookiesFile() {
+  const encoded = process.env.YTDLP_COOKIES_BASE64;
+  const plainText = process.env.YTDLP_COOKIES_TEXT;
+  if (!encoded && !plainText) return null;
+
+  const cookies = plainText || Buffer.from(encoded, "base64").toString("utf8");
+  if (!cookies.trim()) return null;
+
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
+  fs.writeFileSync(ENV_COOKIES_FILE, cookies, { mode: 0o600 });
+  return ENV_COOKIES_FILE;
+}
+
+function cookiesFilePath() {
+  const envCookiesFile = writeEnvCookiesFile();
+  if (envCookiesFile) return envCookiesFile;
+  if (process.env.YTDLP_COOKIES_PATH && fs.existsSync(process.env.YTDLP_COOKIES_PATH)) {
+    return process.env.YTDLP_COOKIES_PATH;
+  }
+  if (fs.existsSync(DEFAULT_COOKIES_FILE)) return DEFAULT_COOKIES_FILE;
+  return null;
+}
+
+function cookieArgs() {
+  if (process.env.YTDLP_COOKIES_FROM_BROWSER) {
+    return ["--cookies-from-browser", process.env.YTDLP_COOKIES_FROM_BROWSER];
+  }
+
+  const cookiePath = cookiesFilePath();
+  return cookiePath ? ["--cookies", cookiePath] : [];
+}
+
+function hasCookieAuth() {
+  return Boolean(
+    process.env.YTDLP_COOKIES_FROM_BROWSER ||
+    process.env.YTDLP_COOKIES_BASE64 ||
+    process.env.YTDLP_COOKIES_TEXT ||
+    (process.env.YTDLP_COOKIES_PATH && fs.existsSync(process.env.YTDLP_COOKIES_PATH)) ||
+    fs.existsSync(DEFAULT_COOKIES_FILE)
+  );
+}
+
+function isAuthBlockedText(text) {
+  return /sign in to confirm|not a bot|use --cookies-from-browser|use --cookies/i.test(text);
+}
+
+function authHelpLines(platform) {
+  if (platform !== "youtube") return [];
+  return [
+    "YouTube asked for sign-in/bot confirmation.",
+    "Hosted servers often need cookies because YouTube treats cloud IPs as suspicious.",
+    "Add exported YouTube cookies to Render as YTDLP_COOKIES_BASE64, or run locally with YTDLP_COOKIES_FROM_BROWSER=chrome."
+  ];
+}
+
 function qualityLabel(height) {
   if (height === "best") return "Best available";
   if (height === "2160") return "4K / 2160p";
@@ -212,6 +269,7 @@ function buildYtDlpArgs({ url, platform, type, quality, clip }) {
     "--cache-dir",
     CACHE_DIR,
     ...extractorArgs(platform),
+    ...cookieArgs(),
     "--force-ipv4",
     "--retries",
     "5",
@@ -448,7 +506,8 @@ function safeFormats(formats = []) {
 function toolsStatus() {
   return {
     ytdlp: Boolean(getYtDlpPath()),
-    ffmpeg: Boolean(getFfmpegPath())
+    ffmpeg: Boolean(getFfmpegPath()),
+    cookies: hasCookieAuth()
   };
 }
 
@@ -465,6 +524,7 @@ function readMetadata(platform, url) {
       "--cache-dir",
       CACHE_DIR,
       ...extractorArgs(platform),
+      ...cookieArgs(),
       "--force-ipv4",
       "--dump-single-json",
       url
@@ -476,7 +536,11 @@ function readMetadata(platform, url) {
   );
 
   if (result.status !== 0) {
-    throw new Error(result.stderr.trim() || `Could not read ${sourceLabel(platform)} info.`);
+    const message = result.stderr.trim() || `Could not read ${sourceLabel(platform)} info.`;
+    if (isAuthBlockedText(message)) {
+      throw new Error(`${message}\n\n${authHelpLines(platform).join("\n")}`);
+    }
+    throw new Error(message);
   }
 
   const info = JSON.parse(result.stdout);
@@ -502,6 +566,7 @@ function appendDownloaderOutput(job, chunk) {
     if (path.isAbsolute(line) && /\.(mp3|mp4|m4a|webm|mkv)$/i.test(line)) {
       job.filePath = line;
     }
+    if (isAuthBlockedText(line)) job.authBlocked = true;
   }
   appendJobLog(job, lines.slice(-20));
 }
@@ -545,7 +610,8 @@ function startDownload(payload) {
     finishedAt: null,
     exitCode: null,
     filePath: null,
-    premiereFilePath: null
+    premiereFilePath: null,
+    authBlocked: false
   };
   jobs.set(id, job);
 
@@ -582,7 +648,8 @@ function startDownload(payload) {
     appendJobLog(job, [
       code === 0
         ? `Download ready: /api/jobs/${job.id}/file`
-        : `Download failed with exit code ${code}.`
+        : `Download failed with exit code ${code}.`,
+      ...(code !== 0 && job.authBlocked ? authHelpLines(platform) : [])
     ]);
   });
 
