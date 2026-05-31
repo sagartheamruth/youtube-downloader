@@ -2,7 +2,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
-const { randomUUID } = require("crypto");
+const { createHmac, randomUUID, timingSafeEqual } = require("crypto");
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -15,6 +15,8 @@ const ENV_COOKIES_FILE = path.join(CACHE_DIR, "cookies.txt");
 const LOCAL_YTDLP = path.join(ROOT, ".venv", "bin", "yt-dlp");
 const LOCAL_PYTHON = path.join(ROOT, ".venv", "bin", "python");
 const PREMIERE_SUFFIX = " - Premiere Ready";
+const AUTH_COOKIE = "video_downloader_auth";
+const AUTH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 const jobs = new Map();
 const hiddenLogPatterns = [
@@ -62,6 +64,171 @@ function sendJson(res, statusCode, data) {
     "content-length": Buffer.byteLength(body)
   });
   res.end(body);
+}
+
+function authEnabled() {
+  return Boolean(process.env.APP_PASSWORD);
+}
+
+function parseCookies(req) {
+  return Object.fromEntries(
+    String(req.headers.cookie || "")
+      .split(";")
+      .map(cookie => cookie.trim())
+      .filter(Boolean)
+      .map(cookie => {
+        const index = cookie.indexOf("=");
+        if (index === -1) return [cookie, ""];
+        return [cookie.slice(0, index), decodeURIComponent(cookie.slice(index + 1))];
+      })
+  );
+}
+
+function authSignature(expiresAt) {
+  return createHmac("sha256", process.env.APP_PASSWORD || "")
+    .update(String(expiresAt))
+    .digest("hex");
+}
+
+function secureCompare(a, b) {
+  const left = Buffer.from(String(a));
+  const right = Buffer.from(String(b));
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function isAuthenticated(req) {
+  if (!authEnabled()) return true;
+
+  const cookie = parseCookies(req)[AUTH_COOKIE];
+  if (!cookie) return false;
+
+  const [expiresAt, signature] = cookie.split(".");
+  if (!expiresAt || !signature || Number(expiresAt) < Date.now()) return false;
+  return secureCompare(signature, authSignature(expiresAt));
+}
+
+function authCookie(req) {
+  const expiresAt = Date.now() + AUTH_TTL_MS;
+  const secure = req.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
+  return `${AUTH_COOKIE}=${encodeURIComponent(`${expiresAt}.${authSignature(expiresAt)}`)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(AUTH_TTL_MS / 1000)}${secure}`;
+}
+
+function clearAuthCookie() {
+  return `${AUTH_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+}
+
+function sendLoginPage(res, error = "") {
+  const body = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Video Downloader Login</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #f7f2e8;
+        color: #111;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main {
+        width: min(420px, calc(100vw - 32px));
+        display: grid;
+        gap: 18px;
+        border: 2px solid #171717;
+        border-radius: 8px;
+        background: #fffdf8;
+        box-shadow: 10px 10px 0 #171717;
+        padding: 28px;
+      }
+      h1 { margin: 0; font-size: 2.1rem; line-height: 1; }
+      p { margin: 0; color: #6e665a; font-weight: 750; }
+      label { display: grid; gap: 8px; color: #6e665a; font-size: 0.86rem; font-weight: 800; }
+      input, button { min-height: 52px; border: 2px solid #d8d0c2; border-radius: 7px; font: inherit; }
+      input { padding: 0 14px; background: #fffefa; color: #111; outline: none; }
+      input:focus { border-color: #171717; box-shadow: 0 0 0 4px rgba(245, 197, 66, 0.32); }
+      button { border-color: #171717; background: #f5c542; color: #111; cursor: pointer; font-weight: 850; }
+      .error { color: #b91c1c; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Video Downloader</h1>
+      <p>Enter the password to continue.</p>
+      <form id="loginForm">
+        <label>
+          Password
+          <input id="password" type="password" autocomplete="current-password" required autofocus>
+        </label>
+        <button type="submit">Unlock</button>
+      </form>
+      <p id="error" class="error">${error}</p>
+    </main>
+    <script>
+      const form = document.querySelector("#loginForm");
+      const error = document.querySelector("#error");
+      form.addEventListener("submit", async event => {
+        event.preventDefault();
+        error.textContent = "";
+        const response = await fetch("/api/login", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ password: document.querySelector("#password").value })
+        });
+        if (response.ok) {
+          location.href = "/";
+        } else {
+          error.textContent = "Wrong password.";
+        }
+      });
+    </script>
+  </body>
+</html>`;
+
+  res.writeHead(200, {
+    "content-type": "text/html; charset=utf-8",
+    "content-length": Buffer.byteLength(body),
+    "cache-control": "no-store, max-age=0"
+  });
+  res.end(body);
+}
+
+async function handleLogin(req, res) {
+  if (!authEnabled()) return sendJson(res, 200, { ok: true });
+
+  try {
+    const body = await readBody(req);
+    if (body.password !== process.env.APP_PASSWORD) {
+      return sendJson(res, 401, { error: "Wrong password." });
+    }
+
+    res.writeHead(200, {
+      "content-type": "application/json; charset=utf-8",
+      "set-cookie": authCookie(req)
+    });
+    res.end(JSON.stringify({ ok: true }));
+  } catch {
+    sendJson(res, 400, { error: "Could not read password." });
+  }
+}
+
+function handleLogout(res) {
+  res.writeHead(204, { "set-cookie": clearAuthCookie() });
+  res.end();
+}
+
+function requireAuth(req, res, pathname) {
+  if (isAuthenticated(req)) return true;
+  if (pathname.startsWith("/api/")) {
+    sendJson(res, 401, { error: "Enter the app password first." });
+  } else {
+    sendLoginPage(res);
+  }
+  return false;
 }
 
 function readBody(req) {
@@ -734,6 +901,20 @@ function serveStatic(req, res, pathname) {
 const server = http.createServer(async (req, res) => {
   try {
     const { pathname } = new URL(req.url, `http://${req.headers.host}`);
+    if (pathname === "/login" && req.method === "GET") {
+      sendLoginPage(res);
+      return;
+    }
+    if (pathname === "/api/login" && req.method === "POST") {
+      await handleLogin(req, res);
+      return;
+    }
+    if (pathname === "/api/logout" && req.method === "POST") {
+      handleLogout(res);
+      return;
+    }
+    if (!requireAuth(req, res, pathname)) return;
+
     if (pathname.startsWith("/api/")) {
       await handleApi(req, res, pathname);
     } else {
