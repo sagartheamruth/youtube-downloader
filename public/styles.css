@@ -119,6 +119,53 @@ h1 {
   padding: clamp(18px, 4vw, 30px);
 }
 
+.source-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  border: 2px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--line-strong);
+  padding: 6px;
+}
+
+.source-tab {
+  min-height: 44px;
+  border-color: transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #fff8e7;
+  box-shadow: none;
+}
+
+.source-tab:hover {
+  box-shadow: none;
+}
+
+.source-tab.active {
+  background: var(--accent);
+  color: var(--ink);
+}
+
+.source-tab[data-platform="instagram"].active {
+  background: #ff6b9d;
+}
+
+.source-tab[data-platform="x"].active {
+  background: #dce3ea;
+}
+
+.source-tab[data-platform="any"].active {
+  background: #9de2c0;
+}
+
+.source-hint {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 750;
+}
+
 .row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -354,17 +401,21 @@ button:disabled {
 }
 
 .download-link {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
+  width: fit-content;
+  max-width: 100%;
   min-height: 48px;
-  margin-top: 16px;
+  margin: 28px 0 24px;
   border: 2px solid var(--line-strong);
   border-radius: 7px;
   background: var(--accent);
   color: var(--ink);
   box-shadow: 5px 5px 0 var(--line-strong);
   font-weight: 850;
+  line-height: 1.1;
+  padding: 0 24px;
   text-decoration: none;
 }
 
@@ -448,6 +499,10 @@ button:disabled {
 }
 
 @media (max-width: 560px) {
+  .source-tabs {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .row,
   .actions,
   .clip-times,
