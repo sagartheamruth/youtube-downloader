@@ -3,15 +3,15 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>YouTube Downloader</title>
+    <title>Video Downloader</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
-        <a class="brand" href="/" aria-label="YouTube Downloader home">
+        <a class="brand" href="/" aria-label="Video Downloader home">
           <span class="brand-mark"></span>
-          <span>YT Downloader</span>
+          <span>Video Downloader</span>
         </a>
       </header>
 
@@ -19,7 +19,7 @@
         <div class="intro">
           <div class="heading">
             <p class="eyebrow">Local downloader</p>
-            <h1>YouTube Downloader</h1>
+            <h1>Video Downloader</h1>
           </div>
 
           <div id="toolStatus" class="notice muted">Checking tools...</div>
@@ -28,10 +28,26 @@
         </div>
 
         <form id="downloadForm" class="form">
+          <div class="source-tabs" role="tablist" aria-label="Download source">
+            <button class="source-tab active" type="button" role="tab" aria-selected="true" data-platform="youtube">
+              YouTube
+            </button>
+            <button class="source-tab" type="button" role="tab" aria-selected="false" data-platform="instagram">
+              Instagram
+            </button>
+            <button class="source-tab" type="button" role="tab" aria-selected="false" data-platform="x">
+              X
+            </button>
+            <button class="source-tab" type="button" role="tab" aria-selected="false" data-platform="any">
+              Any Link
+            </button>
+          </div>
+
           <label class="field">
-            <span>YouTube link</span>
+            <span id="urlLabel">YouTube link</span>
             <input id="url" name="url" type="url" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off" required>
           </label>
+          <p id="sourceHint" class="source-hint">Paste a YouTube video link.</p>
 
           <div class="row">
             <label class="field">
