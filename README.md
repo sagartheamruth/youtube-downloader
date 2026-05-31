@@ -34,6 +34,7 @@ Instagram and X support work best with public posts that contain video. The Any 
 
 YouTube can block hosted servers with "Sign in to confirm you're not a bot." The app supports optional yt-dlp cookies:
 
+- Render password gate: set `APP_PASSWORD` so the hosted downloader is not public.
 - Render: set `YTDLP_COOKIES_BASE64` to a base64-encoded Netscape cookies export.
 - Local Mac: run with `YTDLP_COOKIES_FROM_BROWSER=chrome npm start`, or place a `cookies.txt` file in the project root.
 
