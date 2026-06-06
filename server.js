@@ -66,6 +66,81 @@ function sendJson(res, statusCode, data) {
   res.end(body);
 }
 
+function expiredJobMessage() {
+  return "This download expired or the server restarted. Start the download again.";
+}
+
+function sendExpiredJobPage(res) {
+  const body = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Download Expired</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #f7f2e8;
+        color: #101010;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      main {
+        width: min(520px, calc(100vw - 32px));
+        padding: 32px;
+        border: 3px solid #101010;
+        border-radius: 8px;
+        background: #fffaf0;
+        box-shadow: 8px 8px 0 #101010;
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: clamp(2rem, 8vw, 4rem);
+        line-height: 0.95;
+        letter-spacing: 0;
+      }
+      p {
+        margin: 0 0 24px;
+        color: #3f3a33;
+        font-size: 1rem;
+        line-height: 1.5;
+      }
+      a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 48px;
+        padding: 0 18px;
+        border: 3px solid #101010;
+        border-radius: 8px;
+        background: #f5cc59;
+        color: #101010;
+        box-shadow: 6px 6px 0 #101010;
+        font-weight: 800;
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Download expired</h1>
+      <p>${expiredJobMessage()} This usually happens when the hosted app wakes up, restarts, or an old download button is opened later.</p>
+      <a href="/">Start again</a>
+    </main>
+  </body>
+</html>`;
+
+  res.writeHead(404, {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store, max-age=0",
+    "content-length": Buffer.byteLength(body)
+  });
+  res.end(body);
+}
+
 function authEnabled() {
   return Boolean(process.env.APP_PASSWORD);
 }
@@ -855,18 +930,18 @@ async function handleApi(req, res, pathname) {
   const fileMatch = pathname.match(/^\/api\/jobs\/([a-f0-9-]+)\/file$/);
   if (fileMatch && req.method === "GET") {
     const job = jobs.get(fileMatch[1]);
-    if (!job) return sendJson(res, 404, { error: "Job not found." });
+    if (!job) return sendExpiredJobPage(res);
     if (job.status !== "complete") return sendJson(res, 409, { error: "Download is not ready yet." });
 
     const filePath = outputFileForJob(job);
-    if (!filePath) return sendJson(res, 404, { error: "Downloaded file is no longer available." });
+    if (!filePath) return sendExpiredJobPage(res);
     return sendFile(res, filePath);
   }
 
   const jobMatch = pathname.match(/^\/api\/jobs\/([a-f0-9-]+)$/);
   if (jobMatch && req.method === "GET") {
     const job = jobs.get(jobMatch[1]);
-    if (!job) return sendJson(res, 404, { error: "Job not found." });
+    if (!job) return sendJson(res, 404, { error: expiredJobMessage() });
     return sendJson(res, 200, { job: publicJob(job) });
   }
 
