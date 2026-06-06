@@ -238,7 +238,7 @@ async function pollJob(id) {
     const data = await response.json();
     if (!response.ok) {
       clearInterval(activeTimer);
-      setLog(data.error || "Could not find download job.");
+      setLog(data.error || "This download expired or the server restarted. Start the download again.");
       setDownloadLink(null);
       return;
     }
