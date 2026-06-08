@@ -68,7 +68,7 @@ function sendJson(res, statusCode, data) {
 }
 
 function expiredJobMessage() {
-  return "This download expired or the server restarted. Start the download again.";
+  return "Download stopped because the host reset the job. Press Download to try again.";
 }
 
 function sendExpiredJobPage(res) {
@@ -1013,7 +1013,7 @@ async function handleApi(req, res, pathname) {
   const jobMatch = pathname.match(/^\/api\/jobs\/([a-f0-9-]+)$/);
   if (jobMatch && req.method === "GET") {
     const job = jobs.get(jobMatch[1]);
-    if (!job) return sendJson(res, 404, { error: expiredJobMessage() });
+    if (!job) return sendJson(res, 404, { error: expiredJobMessage(), retryable: true });
     return sendJson(res, 200, { job: publicJob(job) });
   }
 
