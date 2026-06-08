@@ -25,6 +25,10 @@ const sourceHint = document.querySelector("#sourceHint");
 let activeTimer = null;
 let videoDuration = 120;
 let activePlatform = "youtube";
+let lastDownloadPayload = null;
+let autoRetryUsed = false;
+
+const LAST_PAYLOAD_KEY = "videoDownloader.lastPayload";
 
 const platformCopy = {
   youtube: {
@@ -170,6 +174,50 @@ async function postJson(path, data) {
   return body;
 }
 
+function buildDownloadPayload() {
+  return {
+    url: urlInput.value.trim(),
+    platform: activePlatform,
+    type: typeInput.value,
+    quality: qualityInput.value,
+    clipEnabled: clipEnabled.checked,
+    startTime: startTimeInput.value,
+    endTime: endTimeInput.value
+  };
+}
+
+function rememberDownloadPayload(payload) {
+  lastDownloadPayload = payload;
+  try {
+    sessionStorage.setItem(LAST_PAYLOAD_KEY, JSON.stringify(payload));
+  } catch {}
+}
+
+function rememberedDownloadPayload() {
+  if (lastDownloadPayload) return lastDownloadPayload;
+
+  try {
+    const payload = JSON.parse(sessionStorage.getItem(LAST_PAYLOAD_KEY) || "null");
+    if (payload?.url) {
+      lastDownloadPayload = payload;
+      return payload;
+    }
+  } catch {}
+
+  return null;
+}
+
+function isMissingJob(data) {
+  return data?.retryable || /expired|server restarted|job not found/i.test(data?.error || "");
+}
+
+async function requestDownload(payload, { retry = false } = {}) {
+  const data = await postJson("/api/download", payload);
+  setLog(retry ? ["The host reset the job, so I restarted the download once.", ...data.job.log] : data.job.log);
+  setDownloadLink(data.job.downloadUrl);
+  pollJob(data.job.id);
+}
+
 async function refreshStatus() {
   const response = await fetch("/api/status");
   const data = await response.json();
@@ -238,8 +286,21 @@ async function pollJob(id) {
     const data = await response.json();
     if (!response.ok) {
       clearInterval(activeTimer);
-      setLog(data.error || "This download expired or the server restarted. Start the download again.");
       setDownloadLink(null);
+
+      const payload = rememberedDownloadPayload();
+      if (isMissingJob(data) && payload && !autoRetryUsed) {
+        autoRetryUsed = true;
+        setLog("The host reset the job. Restarting the same download once...");
+        try {
+          await requestDownload(payload, { retry: true });
+        } catch (error) {
+          setLog(error.message);
+        }
+        return;
+      }
+
+      setLog(data.error || "Download stopped. Press Download to try again.");
       return;
     }
 
@@ -258,18 +319,10 @@ form.addEventListener("submit", async event => {
   setLog("Preparing download...");
 
   try {
-    const data = await postJson("/api/download", {
-      url: urlInput.value.trim(),
-      platform: activePlatform,
-      type: typeInput.value,
-      quality: qualityInput.value,
-      clipEnabled: clipEnabled.checked,
-      startTime: startTimeInput.value,
-      endTime: endTimeInput.value
-    });
-    setLog(data.job.log);
-    setDownloadLink(data.job.downloadUrl);
-    pollJob(data.job.id);
+    const payload = buildDownloadPayload();
+    autoRetryUsed = false;
+    rememberDownloadPayload(payload);
+    await requestDownload(payload);
   } catch (error) {
     setDownloadLink(null);
     setLog(error.message);
