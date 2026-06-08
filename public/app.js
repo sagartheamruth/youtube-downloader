@@ -26,9 +26,10 @@ let activeTimer = null;
 let videoDuration = 120;
 let activePlatform = "youtube";
 let lastDownloadPayload = null;
-let autoRetryUsed = false;
+let autoRetryCount = 0;
 
 const LAST_PAYLOAD_KEY = "videoDownloader.lastPayload";
+const MAX_AUTO_RETRIES = 3;
 
 const platformCopy = {
   youtube: {
@@ -208,12 +209,12 @@ function rememberedDownloadPayload() {
 }
 
 function isMissingJob(data) {
-  return data?.retryable || /expired|server restarted|job not found/i.test(data?.error || "");
+  return data?.retryable || /expired|server restarted|host reset|job reset|job not found/i.test(data?.error || "");
 }
 
 async function requestDownload(payload, { retry = false } = {}) {
   const data = await postJson("/api/download", payload);
-  setLog(retry ? ["The host reset the job, so I restarted the download once.", ...data.job.log] : data.job.log);
+  setLog(retry ? [`Restarting download (${autoRetryCount}/${MAX_AUTO_RETRIES})...`, ...data.job.log] : data.job.log);
   setDownloadLink(data.job.downloadUrl);
   pollJob(data.job.id);
 }
@@ -289,9 +290,9 @@ async function pollJob(id) {
       setDownloadLink(null);
 
       const payload = rememberedDownloadPayload();
-      if (isMissingJob(data) && payload && !autoRetryUsed) {
-        autoRetryUsed = true;
-        setLog("The host reset the job. Restarting the same download once...");
+      if (isMissingJob(data) && payload && autoRetryCount < MAX_AUTO_RETRIES) {
+        autoRetryCount += 1;
+        setLog(`Connection reset. Restarting download (${autoRetryCount}/${MAX_AUTO_RETRIES})...`);
         try {
           await requestDownload(payload, { retry: true });
         } catch (error) {
@@ -300,7 +301,7 @@ async function pollJob(id) {
         return;
       }
 
-      setLog(data.error || "Download stopped. Press Download to try again.");
+      setLog(isMissingJob(data) ? "Ready. Press Download to start again." : data.error || "Download stopped. Press Download to try again.");
       return;
     }
 
@@ -320,7 +321,7 @@ form.addEventListener("submit", async event => {
 
   try {
     const payload = buildDownloadPayload();
-    autoRetryUsed = false;
+    autoRetryCount = 0;
     rememberDownloadPayload(payload);
     await requestDownload(payload);
   } catch (error) {
