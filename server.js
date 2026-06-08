@@ -10,6 +10,7 @@ const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
 const DOWNLOAD_DIR = path.join(ROOT, "youtube downloads");
 const CACHE_DIR = path.join(ROOT, ".cache", "yt-dlp");
+const JOBS_FILE = path.join(CACHE_DIR, "jobs.json");
 const DEFAULT_COOKIES_FILE = path.join(ROOT, "cookies.txt");
 const ENV_COOKIES_FILE = path.join(CACHE_DIR, "cookies.txt");
 const LOCAL_YTDLP = path.join(ROOT, ".venv", "bin", "yt-dlp");
@@ -139,6 +140,74 @@ function sendExpiredJobPage(res) {
     "content-length": Buffer.byteLength(body)
   });
   res.end(body);
+}
+
+function cleanJobForStorage(job) {
+  return {
+    id: job.id,
+    platform: job.platform,
+    type: job.type,
+    quality: job.quality,
+    status: job.status,
+    log: Array.isArray(job.log) ? job.log.slice(-80) : [],
+    createdAt: job.createdAt,
+    finishedAt: job.finishedAt,
+    exitCode: job.exitCode,
+    filePath: job.filePath,
+    premiereFilePath: job.premiereFilePath,
+    authBlocked: Boolean(job.authBlocked)
+  };
+}
+
+function saveJobs() {
+  try {
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    const body = JSON.stringify([...jobs.values()].map(cleanJobForStorage), null, 2);
+    fs.writeFileSync(`${JOBS_FILE}.tmp`, body);
+    fs.renameSync(`${JOBS_FILE}.tmp`, JOBS_FILE);
+  } catch (error) {
+    console.warn(`Could not save download jobs: ${error.message}`);
+  }
+}
+
+function loadJobs() {
+  if (!fs.existsSync(JOBS_FILE)) return;
+
+  try {
+    const storedJobs = JSON.parse(fs.readFileSync(JOBS_FILE, "utf8"));
+    let changed = false;
+
+    for (const storedJob of Array.isArray(storedJobs) ? storedJobs : []) {
+      if (!storedJob?.id) continue;
+      const job = cleanJobForStorage(storedJob);
+
+      if (["running", "converting"].includes(job.status)) {
+        job.status = "failed";
+        job.finishedAt = new Date().toISOString();
+        job.log = [
+          ...job.log,
+          "The server restarted while this download was running. Start the download again."
+        ].slice(-80);
+        changed = true;
+      }
+
+      if (job.status === "complete" && !outputFileForJob(job)) {
+        job.status = "failed";
+        job.finishedAt = new Date().toISOString();
+        job.log = [
+          ...job.log,
+          "The downloaded file is no longer available on this server. Start the download again."
+        ].slice(-80);
+        changed = true;
+      }
+
+      jobs.set(job.id, job);
+    }
+
+    if (changed) saveJobs();
+  } catch (error) {
+    console.warn(`Could not load saved download jobs: ${error.message}`);
+  }
 }
 
 function authEnabled() {
@@ -560,6 +629,7 @@ function buildYtDlpArgs({ url, platform, type, quality, clip }) {
 function appendJobLog(job, lines) {
   job.log.push(...lines);
   job.log = job.log.slice(-80);
+  saveJobs();
 }
 
 function publicJob(job) {
@@ -856,6 +926,7 @@ function startDownload(payload) {
     authBlocked: false
   };
   jobs.set(id, job);
+  saveJobs();
 
   const child = spawn(ytdlpPath, buildYtDlpArgs({ url: payload.url, platform, type, quality, clip }), {
     cwd: ROOT
@@ -866,12 +937,13 @@ function startDownload(payload) {
   child.on("error", error => {
     job.status = "failed";
     job.finishedAt = new Date().toISOString();
-    job.log.push(error.message);
+    appendJobLog(job, [error.message]);
   });
   child.on("close", async code => {
     job.exitCode = code;
     if (code === 0 && type === "mp4") {
       job.status = "converting";
+      saveJobs();
       const converted = await convertToPremiereMp4(job, job.filePath);
       job.premiereFilePath = converted ? premiereReadyPath(job.filePath) : null;
       job.status = converted ? "complete" : "failed";
@@ -999,6 +1071,10 @@ const server = http.createServer(async (req, res) => {
     sendJson(res, 500, { error: error.message });
   }
 });
+
+fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+fs.mkdirSync(CACHE_DIR, { recursive: true });
+loadJobs();
 
 server.listen(PORT, HOST, () => {
   console.log(`Video downloader running at http://${HOST}:${PORT}`);
