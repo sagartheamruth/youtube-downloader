@@ -68,7 +68,15 @@ function sendJson(res, statusCode, data) {
 }
 
 function expiredJobMessage() {
-  return "Download stopped because the host reset the job. Press Download to try again.";
+  return "The download job reset.";
+}
+
+function redirectHome(res) {
+  res.writeHead(302, {
+    location: "/",
+    "cache-control": "no-store, max-age=0"
+  });
+  res.end();
 }
 
 function sendExpiredJobPage(res) {
@@ -1002,11 +1010,11 @@ async function handleApi(req, res, pathname) {
   const fileMatch = pathname.match(/^\/api\/jobs\/([a-f0-9-]+)\/file$/);
   if (fileMatch && req.method === "GET") {
     const job = jobs.get(fileMatch[1]);
-    if (!job) return sendExpiredJobPage(res);
+    if (!job) return redirectHome(res);
     if (job.status !== "complete") return sendJson(res, 409, { error: "Download is not ready yet." });
 
     const filePath = outputFileForJob(job);
-    if (!filePath) return sendExpiredJobPage(res);
+    if (!filePath) return redirectHome(res);
     return sendFile(res, filePath);
   }
 
